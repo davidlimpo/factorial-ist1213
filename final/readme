@@ -1,0 +1,5 @@
+/* Este documento serve como meio de comunicação e interação sobre o projecto de compiladores 2013 */
+
+@Author: David Limpo, José Andrade
+@Projecto: Factorial
+@Ferramentas: Flex, Byacc, Pburg

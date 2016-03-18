@@ -1,0 +1,307 @@
+%{
+/* (Compact with functions included as instructions)
+ * Instruction selection with postfix.h
+ */
+#include <stdio.h>
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+#include "node.h"
+#include "tabid.h"
+#include "postfix.h"
+#include "y.tab.h"
+
+#ifndef U_
+#define U_ "_"
+#endif
+
+extern FILE *outfp;
+int lbl;
+extern char *mklbl(int n);
+extern char **yynames;
+
+static int stk;
+static int sameVar(NODEPTR_TYPE p) {
+  return strcmp(p->SUB(0)->value.s, p->SUB(1)->SUB(0)->value.s) ? 0x7fff : 2;
+}
+static int sameLoc(NODEPTR_TYPE p) {
+  return p->SUB(0)->value.s == p->SUB(1)->SUB(0)->value.s ? 0x7fff : 2;
+}
+
+%}
+%term LIST=';' ASSIGN='=' ADD='+' SUB='-' MUL='*' DIV='/' MOD='%' LT='<' GT='>' ARG=',' OR='|' AND='&' NOT='~' FAC='!'
+%include "y.tab.h"
+%%
+
+prog: BLOCO(params, instrs)
+prog: END
+
+params: PAR(params, param)
+params: END
+
+param: LOCAL
+param: END
+
+instrs: STMT(instrs, instrs)
+instrs: END 
+
+
+
+instrs: LIST(instrs, instrs)
+instrs: instr
+instrs: prog
+
+
+
+instr: EXPR(expr) 					1 { fprintf(outfp, pfTRASH, 4); }
+instr:	JZ(expr,ETIQ)					1 { fprintf(outfp, pfJZ, p->SUB(1)->value.s); }
+instr:	JNZ(expr,ETIQ)					1 { fprintf(outfp, pfJNZ, p->SUB(1)->value.s); }
+instr:	JMP						1 { fprintf(outfp, pfJMP, p->value.s); }
+instr:	LABEL						1  { fprintf(outfp, pfLABEL, p->value.s); }
+instr: BREAK
+
+
+%!instr:	JZ(LT(expr,expr), ETIQ)				1 { fprintf(outfp, pfJGE, p->SUB(1)->value.s); }
+%!instr:	JZ(LE(expr,expr), ETIQ)				1 { fprintf(outfp, pfJGT, p->SUB(1)->value.s); }
+%!instr:	JZ(GT(expr,expr), ETIQ)				1 { fprintf(outfp, pfJLE, p->SUB(1)->value.s); }
+%!instr:	JZ(GE(expr,expr), ETIQ)				1 { fprintf(outfp, pfJLT, p->SUB(1)->value.s); }
+%!instr:	JZ(EQ(expr,expr), ETIQ)				1 { fprintf(outfp, pfJNE, p->SUB(1)->value.s); }
+%!instr:	JZ(NE(expr,expr), ETIQ)				1 { fprintf(outfp, pfJEQ, p->SUB(1)->value.s); }
+%!instr:	JNZ(LT(expr,expr), ETIQ)			1 { fprintf(outfp, pfJLT, p->SUB(1)->value.s); }
+%!instr:	JNZ(LE(expr,expr), ETIQ)			1 { fprintf(outfp, pfJLE, p->SUB(1)->value.s); }
+%!instr:	JNZ(GT(expr,expr), ETIQ)			1 { fprintf(outfp, pfJGT, p->SUB(1)->value.s); }
+%!instr:	JNZ(GE(expr,expr), ETIQ)			1 { fprintf(outfp, pfJGE, p->SUB(1)->value.s); }
+%!instr:	JNZ(EQ(expr,expr), ETIQ)			1 { fprintf(outfp, pfJEQ, p->SUB(1)->value.s); }
+%!instr:	JNZ(NE(expr,expr), ETIQ)			1 { fprintf(outfp, pfJNE, p->SUB(1)->value.s); }
+
+
+
+
+
+
+expr: ATR(VARIABLE, expr) 				1 { fprintf(outfp, pfDUP pfADDRA, p->SUB(0)->value.s); }
+expr: ATR(LOCAL, expr) 					1 { fprintf(outfp, pfDUP pfLOCA, p->SUB(0)->value.i); }
+
+
+expr: INT 						1 { fprintf(outfp, pfIMM, p->value.i); }
+expr: NUM						2 { fprintf(outfp, pfIMM, p->value.i /* .d ?? */); }
+expr: CALL(VARIABLE, STRI) 				4 { char *s = p->SUB(1)->value.s, *l = mklbl(++lbl);
+							    fprintf(outfp, pfRODATA pfALIGN pfLABEL, l);
+							    do fprintf(outfp, pfCHAR, (unsigned char)*s); while (*s++ != 0);
+							    fprintf(outfp, pfTEXT pfADDR pfCALL pfEXTRN pfPUSH,
+							      l, p->SUB(0)->value.s, p->SUB(0)->value.s, 4); }
+expr: CALL(VARIABLE, expr) 				4 { fprintf(outfp, pfCALL pfEXTRN pfPUSH,
+							      p->SUB(0)->value.s, p->SUB(0)->value.s, 4); }
+expr: CALL(VARIABLE, END) 				4 { fprintf(outfp, pfCALL pfEXTRN pfPUSH,
+							      p->SUB(0)->value.s, p->SUB(0)->value.s); }
+							      
+
+
+expr: 	VARIABLE 					1 { fprintf(outfp, pfADDRV, p->value.s); }
+expr: 	LOCAL						1 { fprintf(outfp, pfLOCV, p->value.i); }
+expr: 	INTEGER						1 { fprintf(outfp, pfIMM, p->value.i); }
+expr: 	INDEX(expr, expr)				1 { fprintf(outfp, pfLOCAL pfSTORE, p->SUB(0)->value.i); }
+expr: 	ADD(expr, expr) 				1 { fprintf(outfp, pfADD); }
+expr:	SUB(expr,expr)					1 { fprintf(outfp, pfSUB); }
+expr:	UMINUS(expr)					1 { fprintf(outfp, pfNEG); } 
+expr:	MUL(expr,expr)					1 { fprintf(outfp, pfMUL); }
+expr:	DIV(expr,expr)					1 { fprintf(outfp, pfDIV); }
+expr:	MOD(expr,expr)					1 { fprintf(outfp, pfMOD); }
+expr:	EQ(expr,expr)					1 { fprintf(outfp, pfEQ); }
+expr:	NE(expr,expr)					1 { fprintf(outfp, pfNE); }
+expr:	LT(expr,expr)					1 { fprintf(outfp, pfLT); }
+expr:	LE(expr,expr)					1 { fprintf(outfp, pfLE); }
+expr:	GE(expr,expr)					1 { fprintf(outfp, pfGE); }
+expr:	GT(expr,expr)					1 { fprintf(outfp, pfGT); }
+expr:	OR(expr,expr)					1 { fprintf(outfp, pfOR); }
+expr:	AND(expr,expr)					1 { fprintf(outfp, pfAND); }
+expr:	NOT(expr)					1 { fprintf(outfp, pfNOT); }
+%!expr:	FAC(expr)					1 { fprintf(outfp, ); }
+expr: INC(LOCAL,END)					1 { fprintf(outfp, pfLOCAL pfDUP pfINCR pfLOAD, p->SUB(0)->value.i, 1); }
+expr: DEC(LOCAL,END)					1 { fprintf(outfp, pfLOCAL pfDUP pfDECR pfLOAD, p->SUB(0)->value.i, 1); }
+expr: INC(VARIABLE,END)					1 { fprintf(outfp, pfADDR pfINCR, p->SUB(0)->value.s, 1); }
+expr: DEC(VARIABLE,END)					1 { fprintf(outfp, pfADDR pfDECR, p->SUB(0)->value.s, 1); }
+
+expr: INC(END,LOCAL)					1 { fprintf(outfp, pfLOCAL pfDUP pfLOAD pfSWAP pfINCR, p->SUB(1)->value.i, 1); }
+expr: DEC(END,LOCAL)					1 { fprintf(outfp, pfLOCAL pfDUP pfLOAD pfSWAP pfDECR, p->SUB(1)->value.i, 1); }
+expr: INC(END,VARIABLE)					1 { fprintf(outfp, pfADDR pfINCR, p->SUB(1)->value.s, 1); }
+expr: DEC(END,VARIABLE)					1 { fprintf(outfp, pfADDR pfDECR, p->SUB(1)->value.s, 1); }
+
+expr:	ATR(VARIABLE,ADD(VARIABLE,INT))	sameVar {
+		fprintf(outfp, pfADDR pfINCR, p->SUB(0)->value.s,
+			p->SUB(1)->SUB(1)->value.i); }
+expr:	ATR(LOCAL,ADD(LOCAL,INT))	sameLoc {
+		fprintf(outfp, pfLOCAL pfINCR, p->SUB(0)->value.i,
+			p->SUB(1)->SUB(1)->value.i); }
+
+%!expr:	CALL(VARIABLE,stack)	1 {
+%!		fprintf(outfp, pfCALL pfTRASH, p->SUB(0)->value.s, 4*stk);
+%!		stk = 0;
+%!	      }
+%!expr:	ATR(VARIABLE, CALL(VARIABLE,stack))	1 {
+%!		fprintf(outfp, pfCALL pfTRASH pfPUSH pfADDRA,
+%!			p->SUB(1)->SUB(0)->value.s, 4*stk, p->SUB(0)->value.s);
+%!		stk = 0;
+%!	      }			
+%!			
+%!expr:	ATR(LOCAL, CALL(VARIABLE,stack))	1 {
+%!		fprintf(outfp, pfCALL pfTRASH pfPUSH pfLOCA,
+%!			p->SUB(1)->SUB(0)->value.s, 4*stk, p->SUB(0)->value.i);
+%!		stk = 0;
+%!	      }
+	      
+%!stack:	ARG(stack,stack)
+%!stack:	expr	{ stk++; }
+%!stack:	END
+
+
+
+
+%%
+
+void function(char *name, int enter, Node *body, int f_type, int _pub, int f_con) {
+  int i;
+  extern int trace;
+
+  if(trace) printNode(body, stdout, yynames);
+  if (body == 0 || body->attrib == END) /* forward declaration */
+    fprintf(outfp, pfEXTRN, name);
+  else { /* function body */
+  
+    if(_pub)
+    {
+	fprintf(outfp, pfTEXT pfALIGN pfGLOBL 
+	pfLABEL pfENTER, name, pfFUNC, name, enter);
+    }
+    else if(!_pub)
+    {								//pfGLOBL ?
+	fprintf(outfp, pfTEXT pfALIGN
+	pfLABEL pfENTER, name, enter);
+    }    
+    
+    if (yyselect(body) == 1) yyerror("No match for syntactic tree.");
+    fprintf(outfp, pfLOCV pfPOP pfLEAVE pfRET, -4); /* just in case there is no 'return' */
+    freeNode(body);
+  }
+}
+
+void program(int enter, Node *body) {
+  function("_entry", enter, body, 0, 0, 0);
+  fprintf(outfp, pfEXTRN pfEXTRN pfEXTRN pfEXTRN,
+  		U_"prints", U_"printi", U_"println", U_"readi");
+}
+
+void declare_int(char *name, int value, int init, int _con, int _gl, int _ptr, char * name_ptr) {
+
+    if(!_ptr)
+    {
+	if(_gl){
+
+	    if (init == 0)		// sem inicialização
+	    fprintf(outfp, pfBSS pfALIGN pfGLOBL pfLABEL pfBYTE pfTEXT, name, pfOBJ, name, 4);
+	    
+	    else			// com inicialização
+	    
+	    if(!_con)			// não const
+		fprintf(outfp, pfDATA pfALIGN pfGLOBL pfLABEL pfINTEGER pfTEXT, name, pfOBJ, name, value);
+	    else			// const
+		fprintf(outfp, pfRODATA pfALIGN pfGLOBL pfLABEL pfINTEGER pfTEXT, name, pfOBJ, name, value);
+		
+	}else{
+	
+	    if (init == 0)		// sem inicialização
+	    fprintf(outfp, pfBSS pfALIGN pfLABEL pfBYTE pfTEXT, name, 4);
+	    
+	    else			// com inicialização
+	    
+	    if(!_con)			// não const
+		fprintf(outfp, pfDATA pfALIGN pfLABEL pfINTEGER pfTEXT, name, value);
+	    else			// const
+		fprintf(outfp, pfRODATA pfALIGN pfLABEL pfINTEGER pfTEXT, name, value);
+	}
+    }
+    else
+    {
+    
+   if(_gl){
+
+			// com inicialização
+    
+      if(!_con)			// não const
+	  fprintf(outfp, pfDATA pfALIGN pfGLOBL pfLABEL pfID pfTEXT, name, pfOBJ, name, name_ptr, value);
+      else			// const
+	  fprintf(outfp, pfRODATA pfALIGN pfGLOBL pfLABEL pfID pfTEXT, name, pfOBJ, name, name_ptr, value);
+	  
+  }else{
+  			// com inicialização
+    
+      if(!_con)			// não const
+	  fprintf(outfp, pfDATA pfALIGN pfLABEL pfID pfTEXT, name, name_ptr, value);
+      else			// const
+	  fprintf(outfp, pfRODATA pfALIGN pfLABEL pfID pfTEXT, name, name_ptr, value);
+  }   
+    
+    
+    
+    
+    
+    
+    
+    
+    }
+}
+
+
+void declare_num(char *name, double value, int init, int _con, int _gl){
+  if(_gl){
+  
+    if (init == 0)		// sem inicialização
+      fprintf(outfp, pfBSS pfALIGN pfGLOBL pfLABEL pfBYTE pfTEXT, name, pfOBJ, name, 8);
+
+    else				// com inicialização
+    
+      if(!_con)			// não const
+	fprintf(outfp, pfDATA pfALIGN pfGLOBL pfLABEL pfDOUBLE pfTEXT, name, pfOBJ, name, value);
+      else			// const
+	fprintf(outfp, pfRODATA pfALIGN pfGLOBL pfLABEL pfDOUBLE pfTEXT, name, pfOBJ, name, value);
+	
+  }else{
+  
+    if (init == 0)		// sem inicialização
+      fprintf(outfp, pfBSS pfALIGN pfLABEL pfBYTE pfTEXT, name, 8);
+
+    else				// com inicialização
+    
+      if(!_con)			// não const
+	fprintf(outfp, pfDATA pfALIGN pfLABEL pfDOUBLE pfTEXT, name, value);
+      else			// const
+	fprintf(outfp, pfRODATA pfALIGN pfLABEL pfDOUBLE pfTEXT, name, value);
+  }
+}
+
+
+void declare_str(char *name, char *value, int init, int _con, int _gl){
+
+  if(_gl){
+    if (init == 0)		// sem inicialização
+      fprintf(outfp, pfBSS pfALIGN pfGLOBL pfLABEL pfBYTE pfTEXT, name, pfOBJ, name, 4);
+
+    else				// com inicialização
+    
+      if(!_con)			// não const
+	fprintf(outfp, pfDATA pfALIGN pfGLOBL pfLABEL pfSTR pfTEXT,name, pfOBJ,  name, value);
+      else			// const
+	fprintf(outfp, pfRODATA pfALIGN pfGLOBL pfLABEL pfSTR pfTEXT, name, pfOBJ, name, value);
+	
+  }else{
+    if (init == 0)		// sem inicialização
+      fprintf(outfp, pfBSS pfALIGN pfLABEL pfBYTE pfTEXT, name, 4);
+
+    else				// com inicialização
+    
+      if(!_con)			// não const
+	fprintf(outfp, pfDATA pfALIGN pfLABEL pfSTR pfTEXT, name, value);
+      else			// const
+	fprintf(outfp, pfRODATA pfALIGN pfLABEL pfSTR pfTEXT, name, value);
+  }
+}
